@@ -57,12 +57,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 const stage=document.getElementById('stage'), cv=document.getElementById('c'), ctx=cv.getContext('2d');
 const playBtn=document.getElementById('play'), ico=document.getElementById('ico');
 const PLAY='M7 4l13 8-13 8z', PAUSE='M6 4h4v16H6zM14 4h4v16h-4z';
+const LOW=(navigator.hardwareConcurrency||4)<=4; const DPR=()=>Math.min(LOW?1:1.5,window.devicePixelRatio||1);
 let apoptosis=true; const sexes={male:true,female:false}; let W=0,H=0,cx=0,cy=0,S=1,running=false,mode=null,clock=0;
 const rand=(a,b)=>a+Math.random()*(b-a), lerp=(a,b,t)=>a+(b-a)*t, ease=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
 
 function allCells(){return mode?mode.cells:[]}
 function resize(){
-  const r=stage.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
+  const r=stage.getBoundingClientRect(), dpr=DPR();
   const ncx=r.width/2, ncy=r.height/2;
   if(W){const dx=ncx-cx, dy=ncy-cy; for(const c of allCells()){c.x+=dx;c.y+=dy}
     if(mode===Meio) Meio.shift(dx,dy);}
@@ -99,7 +100,7 @@ function drawCellOn(ctx, c, r, opt={}){
 const Mito={
   cells:[], sprites:new Map(),
   init(){
-    this.R=15*S; this.hue=192; this.sprites.clear();
+    this.R=(LOW?21:18)*S; this.hue=192; this.sprites.clear(); this.density=1;
     this.cells=[this.mk(cx,cy,this.R*1.25,this.R*1.25)];
     this.cells[0].cyc=60;
   },
@@ -108,7 +109,7 @@ const Mito={
   tick(dt){
     const cs=this.cells, R=this.R, m=R*2;
     let on=0; for(const c of cs) if(c.x>-m&&c.x<W+m&&c.y>-m&&c.y<H+m) on++;
-    const room=on < (W+2*m)*(H+2*m)/(Math.PI*R*R*.72);
+    const room=on < this.density*(W+2*m)*(H+2*m)/(Math.PI*R*R*.72);
     const born=[];
     for(const c of cs){
       if(c.dying){c.dying+=dt;c.r*=Math.pow(.9,dt);continue}
@@ -163,7 +164,7 @@ const Mito={
     const h=Math.round(c.h), s=Math.round(c.s/4)*4, l=Math.round(c.l/2)*2, key=h+'|'+s+'|'+l;
     let sp=this.sprites.get(key);
     if(!sp){
-      const dpr=Math.min(2,window.devicePixelRatio||1), base=this.R*1.3, px=Math.ceil(base*2*dpr)+4;
+      const dpr=DPR(), base=this.R, px=Math.ceil(base*2*dpr)+4;
       sp=document.createElement('canvas'); sp.width=sp.height=px;
       const g=sp.getContext('2d'); g.scale(px/(base*2+4/dpr),px/(base*2+4/dpr));
       const o={x:base+2/dpr,y:base+2/dpr,h,s,l};
@@ -174,7 +175,7 @@ const Mito={
   },
   draw(){
     for(const c of this.cells){
-      const r=c.r*(1+.025*Math.sin(clock*.04+c.ph));
+      const big=this.cells.length>400, r=big?c.r:c.r*(1+.025*Math.sin(clock*.04+c.ph));
       if(c.x<-r||c.x>W+r||c.y<-r||c.y>H+r) continue;
       if(c.dying){const t=Math.min(1,c.dying/28);
         drawCell({x:c.x,y:c.y,h:c.h+t*-20,s:c.s*(1-t*.8),l:c.l-t*22},r,{alpha:1-t*.7});
@@ -182,7 +183,8 @@ const Mito={
           for(let i=0;i<5;i++){const a=i*1.257+c.ph, d=r*(1+t*1.4);ctx.beginPath();ctx.arc(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,r*.22*(1-t*.5),0,7);ctx.fill()}}
         continue}
       const sp=this.sprite(c), k=r/sp.base, size=(sp.base*2+sp.pad*2)*k;
-      ctx.drawImage(sp,c.x-size/2,c.y-size/2,size,size);
+      if(Math.abs(r-sp.base)<.5){const n=sp.base*2+sp.pad*2; ctx.drawImage(sp,Math.round(c.x-n/2),Math.round(c.y-n/2),n,n);}
+      else ctx.drawImage(sp,c.x-size/2,c.y-size/2,size,size);
     }
   }
 };
@@ -417,15 +419,26 @@ const Meio={
 };
 
 /* ---------- loop & controls ---------- */
+let bgc=null;
 function bg(){
-  ctx.fillStyle='#0a0f15';ctx.fillRect(0,0,W,H);
-  const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(W,H)*.7);
-  g.addColorStop(0,'rgba(40,62,80,.22)');g.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  if(!bgc||bgc.w!==W||bgc.h!==H){
+    const dpr=DPR(); bgc=document.createElement('canvas'); bgc.width=Math.round(W*dpr); bgc.height=Math.round(H*dpr); bgc.w=W; bgc.h=H;
+    const g2=bgc.getContext('2d'); g2.scale(dpr,dpr);
+    g2.fillStyle='#0a0f15';g2.fillRect(0,0,W,H);
+    const g=g2.createRadialGradient(cx,cy,0,cx,cy,Math.max(W,H)*.7);
+    g.addColorStop(0,'rgba(40,62,80,.22)');g.addColorStop(1,'rgba(0,0,0,0)');
+    g2.fillStyle=g;g2.fillRect(0,0,W,H);
+  }
+  ctx.drawImage(bgc,0,0,W,H);
 }
+let slow=0, ema=16.7;
 let last=performance.now();
 function frame(now){
-  const dt=Math.min(3,(now-last)/16.667); last=now;
+  const ms=now-last, dt=Math.min(3,ms/16.667); last=now;
+  ema+=(Math.min(ms,100)-ema)*.05;
+  if(mode===Mito&&running&&Mito.cells.length>300){
+    if(ema>26){ if((slow+=dt)>90){Mito.density=Math.max(.45,Mito.density*.9);slow=0;} } else slow=0;
+  }
   clock+=dt;
   if(mode&&running) mode.step(dt);
   bg(); if(mode) mode.draw();
