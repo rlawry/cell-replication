@@ -1,0 +1,448 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Cell Division Fields</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@500;700&display=swap">
+<style>
+/* Layout: one full-height stage; flat button strip on top, square play control floating bottom-center */
+:root{
+  --ink:#0a0f15; --ink-2:#111922; --line:#22303c; --fg:#c6d2db; --muted:#6a7b89; --accent:#eef5f8;
+  --ui:"Chivo", "Helvetica Neue", Arial, sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ink);color:var(--fg);font-family:var(--ui);overflow:hidden;display:flex;flex-direction:column}
+nav{display:flex;background:var(--ink-2);border-bottom:1px solid var(--line);
+  padding-left:max(0px, env(safe-area-inset-left, 0px));padding-right:max(0px, env(safe-area-inset-right, 0px))}
+nav button{flex:1;min-width:0;border:0;border-radius:0;margin:0;background:transparent;color:var(--muted);
+  font:700 12px/1 var(--ui);letter-spacing:.2em;text-transform:uppercase;padding-block:18px;cursor:pointer;
+  box-shadow:inset 0 -2px 0 transparent;transition:color .2s, background .2s, box-shadow .2s}
+nav button + button{border-left:1px solid var(--line)}
+nav button:hover{color:var(--fg);background:rgba(255,255,255,.02)}
+nav button[aria-pressed="true"]{color:var(--accent);background:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+nav button:focus-visible,#play:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}
+#stage{position:relative;flex:1;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#play{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(28px + env(safe-area-inset-bottom, 0px));
+  width:64px;height:64px;border:1px solid var(--line);border-radius:0;background:rgba(17,25,34,.72);
+  color:var(--accent);display:grid;place-items:center;cursor:pointer;backdrop-filter:blur(6px);transition:background .2s,border-color .2s}
+#play:hover{border-color:var(--muted);background:rgba(17,25,34,.9)}
+#play svg{width:22px;height:22px;fill:currentColor}
+.opts{position:absolute;left:calc(50% + 52px);bottom:calc(28px + env(safe-area-inset-bottom, 0px));height:64px;display:flex;align-items:center;gap:22px}
+.opt{display:flex;align-items:center;gap:10px;color:var(--muted);font:700 11px/1 var(--ui);letter-spacing:.2em;text-transform:uppercase;cursor:pointer;user-select:none}
+.opt input{appearance:none;margin:0;width:18px;height:18px;border:1px solid var(--muted);border-radius:0;background:transparent;display:grid;place-items:center;cursor:pointer}
+.opt input:checked{background:var(--accent);border-color:var(--accent)}
+.opt input:checked::after{content:"";width:8px;height:8px;background:var(--ink)}
+.opt input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.opt:hover{color:var(--fg)}
+@media (max-width:520px){.opts{left:auto;right:max(16px, env(safe-area-inset-right, 0px));bottom:calc(100px + env(safe-area-inset-bottom, 0px));height:auto;flex-direction:column;align-items:flex-start;gap:14px}.opt{letter-spacing:.1em}}
+@media (max-width:420px){nav button{font-size:10px;letter-spacing:.12em}}
+</style>
+
+<nav>
+  <button id="b-diff" data-mode="diff" aria-pressed="false">Differentiation</button>
+  <button id="b-mito" data-mode="mito" aria-pressed="false">Mitosis</button>
+  <button id="b-meio" data-mode="meio" aria-pressed="false">Meiosis</button>
+</nav>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div class="opts" id="opt-mito" hidden><label class="opt"><input type="checkbox" id="apo-box" checked>Apoptosis</label></div>
+  <div class="opts" id="opt-meio" hidden><label class="opt"><input type="checkbox" id="sex-m" checked>Male</label><label class="opt"><input type="checkbox" id="sex-f">Female</label></div>
+  <button id="play" aria-label="Play" hidden>
+    <svg id="ico" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
+  </button>
+</div>
+
+<script>
+(()=>{
+const stage=document.getElementById('stage'), cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const playBtn=document.getElementById('play'), ico=document.getElementById('ico');
+const PLAY='M7 4l13 8-13 8z', PAUSE='M6 4h4v16H6zM14 4h4v16h-4z';
+let apoptosis=true; const sexes={male:true,female:false}; let W=0,H=0,cx=0,cy=0,S=1,running=false,mode=null,clock=0;
+const rand=(a,b)=>a+Math.random()*(b-a), lerp=(a,b,t)=>a+(b-a)*t, ease=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+
+function allCells(){return mode?mode.cells:[]}
+function resize(){
+  const r=stage.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
+  const ncx=r.width/2, ncy=r.height/2;
+  if(W){const dx=ncx-cx, dy=ncy-cy; for(const c of allCells()){c.x+=dx;c.y+=dy}
+    if(mode===Meio) Meio.shift(dx,dy);}
+  W=r.width;H=r.height;cx=ncx;cy=ncy;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+/* ---------- shared cell drawing ---------- */
+function drawCell(c, r, opt={}){ drawCellOn(ctx,c,r,opt) }
+function drawCellOn(ctx, c, r, opt={}){
+  if(r<.5) return;
+  const h=c.h,s=c.s,l=c.l,a=opt.alpha??1;
+  ctx.save();ctx.translate(c.x,c.y);
+  if(c.rot) ctx.rotate(c.rot);
+  const sx=c.sx||1; if(sx!==1) ctx.scale(sx,1/Math.sqrt(sx));
+  ctx.globalAlpha=a;
+  const g=ctx.createRadialGradient(-r*.3,-r*.35,r*.08,0,0,r);
+  g.addColorStop(0,`hsl(${h},${s}%,${Math.min(97,l+20)}%)`);
+  g.addColorStop(.72,`hsl(${h},${s}%,${l}%)`);
+  g.addColorStop(1,`hsl(${h},${s}%,${Math.max(8,l-16)}%)`);
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+  ctx.lineWidth=1;ctx.strokeStyle=`hsla(${h},${s}%,${Math.min(95,l+24)}%,.45)`;ctx.stroke();
+  if(c.ring){ctx.beginPath();ctx.arc(0,0,r*.5,0,Math.PI*2);ctx.fillStyle=`hsla(${h},${s}%,${Math.max(6,l-30)}%,.85)`;ctx.fill();}
+  else if(c.dots){
+    ctx.fillStyle=`hsla(${h},${Math.min(100,s+10)}%,${Math.max(10,l-28)}%,.9)`;
+    const n=c.dots, rr=n===1?0:r*.32, dr=r*(n===1?.26:.16);
+    for(let i=0;i<n;i++){const t=i/n*Math.PI*2+(c.spin||0);ctx.beginPath();ctx.arc(Math.cos(t)*rr,Math.sin(t)*rr,dr,0,Math.PI*2);ctx.fill();}
+  }
+  else if(r>4){ctx.beginPath();ctx.arc(r*.08,r*.06,r*.3,0,Math.PI*2);ctx.fillStyle=`hsla(${h},${s}%,${Math.max(8,l-24)}%,.75)`;ctx.fill();}
+  ctx.restore();
+}
+
+/* ---------- mitosis: cohesive blob, divides until the screen is covered ---------- */
+const Mito={
+  cells:[], sprites:new Map(),
+  init(){
+    this.R=15*S; this.hue=192; this.sprites.clear();
+    this.cells=[this.mk(cx,cy,this.R*1.25,this.R*1.25)];
+    this.cells[0].cyc=60;
+  },
+  mk(x,y,r,tr){return{x,y,r,tr,h:this.hue+rand(-5,5),s:rand(48,60),l:rand(46,58),cyc:rand(150,260),ph:rand(0,6.28),div:0,lim:Math.floor(rand(2,5)),dying:0}},
+  step(dt){
+    const cs=this.cells, R=this.R, m=R*2;
+    let on=0; for(const c of cs) if(c.x>-m&&c.x<W+m&&c.y>-m&&c.y<H+m) on++;
+    const room=on < (W+2*m)*(H+2*m)/(Math.PI*R*R*.62);
+    const born=[];
+    for(const c of cs){
+      if(c.dying){c.dying+=dt;c.r*=Math.pow(.9,dt);continue}
+      c.r+=(c.tr-c.r)*.05*dt;
+      c.cyc-=dt;
+      if(c.cyc<=0){
+        c.cyc=rand(160,280);
+        if(apoptosis&&c.div>=c.lim){c.dying=1;continue}
+        const vis=c.x>-R&&c.x<W+R&&c.y>-R&&c.y<H+R;
+        if(room&&vis){
+          const a=rand(0,Math.PI*2), d=c.r*.35;
+          c.tr=R; c.div++;
+          const n=this.mk(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,c.r*.55,R);
+          n.h=c.h+rand(-2,2); n.l=Math.max(40,Math.min(64,c.l+rand(-3,3)));
+          c.x-=Math.cos(a)*d*.5;c.y-=Math.sin(a)*d*.5;
+          born.push(n);
+        }
+      }
+    }
+    for(const n of born) cs.push(n);
+    const far=R*6;
+    const list=this.cells=cs.filter(c=>!(c.dying&&c.r<1)&&(cs.length<50||(c.x>-far&&c.x<W+far&&c.y>-far&&c.y<H+far)));
+    const n=list.length; if(!n) return;
+    let mx=0,my=0;for(const c of list){mx+=c.x;my+=c.y} mx/=n;my/=n;
+    const k=n<300?.0025:.0012;
+    for(const c of list){c.x+=(cx-mx)*.02*dt+(cx-c.x)*k*dt;c.y+=(cy-my)*.02*dt+(cy-c.y)*k*dt;}
+    // uniform-grid repulsion with typed arrays (one pass, each pair once)
+    const size=R*2.4, ox=-far, oy=-far, cols=Math.ceil((W+2*far)/size)+1, rows=Math.ceil((H+2*far)/size)+1, nc=cols*rows;
+    if(!this.head||this.head.length<nc) this.head=new Int32Array(nc);
+    if(!this.next||this.next.length<n) this.next=new Int32Array(Math.max(n,1024)*2);
+    const head=this.head, next=this.next; head.fill(-1,0,nc);
+    const gxOf=x=>Math.max(0,Math.min(cols-1,Math.floor((x-ox)/size))), gyOf=y=>Math.max(0,Math.min(rows-1,Math.floor((y-oy)/size)));
+    for(let i=0;i<n;i++){const c=list[i], g=gyOf(c.y)*cols+gxOf(c.x); next[i]=head[g]; head[g]=i;}
+    const f=.25*Math.min(dt,2);
+    for(let i=0;i<n;i++){
+      const a=list[i], gx=gxOf(a.x), gy=gyOf(a.y);
+      for(let yy=Math.max(0,gy-1);yy<=Math.min(rows-1,gy+1);yy++)
+      for(let xx=Math.max(0,gx-1);xx<=Math.min(cols-1,gx+1);xx++){
+        for(let j=head[yy*cols+xx];j!==-1;j=next[j]){ if(j<=i) continue;
+          const b=list[j], dx=b.x-a.x, dy=b.y-a.y, mm=(a.r+b.r)*.86;
+          if(dx>mm||dx<-mm||dy>mm||dy<-mm) continue;
+          const d2=dx*dx+dy*dy; if(d2>=mm*mm) continue;
+          const d=Math.sqrt(d2)||.01, p=(mm-d)/d*f;
+          a.x-=dx*p;a.y-=dy*p;b.x+=dx*p;b.y+=dy*p;
+        }
+      }
+    }
+  },
+  sprite(c){
+    const h=Math.round(c.h), s=Math.round(c.s/4)*4, l=Math.round(c.l/2)*2, key=h+'|'+s+'|'+l;
+    let sp=this.sprites.get(key);
+    if(!sp){
+      const dpr=Math.min(2,window.devicePixelRatio||1), base=this.R*1.3, px=Math.ceil(base*2*dpr)+4;
+      sp=document.createElement('canvas'); sp.width=sp.height=px;
+      const g=sp.getContext('2d'); g.scale(px/(base*2+4/dpr),px/(base*2+4/dpr));
+      const o={x:base+2/dpr,y:base+2/dpr,h,s,l};
+      drawCellOn(g,o,base);
+      sp.base=base; sp.pad=2/dpr; this.sprites.set(key,sp);
+    }
+    return sp;
+  },
+  draw(){
+    for(const c of this.cells){
+      const r=c.r*(1+.025*Math.sin(clock*.04+c.ph));
+      if(c.x<-r||c.x>W+r||c.y<-r||c.y>H+r) continue;
+      if(c.dying){const t=Math.min(1,c.dying/28);
+        drawCell({x:c.x,y:c.y,h:c.h+t*-20,s:c.s*(1-t*.8),l:c.l-t*22},r,{alpha:1-t*.7});
+        if(t>.3){ctx.fillStyle=`hsla(${c.h},20%,${c.l-10}%,${.5*(1-t)})`;
+          for(let i=0;i<5;i++){const a=i*1.257+c.ph, d=r*(1+t*1.4);ctx.beginPath();ctx.arc(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,r*.22*(1-t*.5),0,7);ctx.fill()}}
+        continue}
+      const sp=this.sprite(c), k=r/sp.base, size=(sp.base*2+sp.pad*2)*k;
+      ctx.drawImage(sp,c.x-size/2,c.y-size/2,size,size);
+    }
+  }
+};
+
+/* ---------- differentiation: branching lineages ---------- */
+const Diff={
+  cells:[],
+  init(){
+    this.R0=19*S; this.t=0; this.phase=0; this.ring=[]; this.branches=[];
+    this.z={x:cx,y:cy,r:this.R0,tr:this.R0,h:42,s:28,l:86,parent:null,ph:0};
+    this.cells=[this.z];
+    const pal=[350,24,50,138,184,222,276,312].sort(()=>Math.random()-.5);
+    this.pal=pal; this.off=rand(0,Math.PI*2);
+  },
+  step(dt){
+    this.t+=dt;
+    for(const c of this.cells) c.r+=(c.tr-c.r)*.08*dt;
+    if(this.phase===0){
+      const k=Math.floor(this.t/16);
+      while(this.ring.length<Math.min(6,k)){
+        const i=this.ring.length, a=this.off+i/6*Math.PI*2, d=this.R0*1.6;
+        const c={x:cx+Math.cos(a)*d,y:cy+Math.sin(a)*d,r:2,tr:this.R0*.82,h:42+rand(-6,6),s:30,l:84,parent:this.z,ph:rand(0,6),a};
+        this.cells.push(c); this.ring.push(c);
+      }
+      if(this.ring.length===6 && this.t>130){
+        this.phase=1;
+        const forms=['round','long','ring','long','round','ring'];
+        this.ring.forEach((c,i)=>{
+          this.branches.push({tip:c,ang:c.a,hue:this.pal[i],form:forms[i],depth:0,span:rand(16,24),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
+        });
+      }
+      return;
+    }
+    let active=0;
+    for(const b of [...this.branches]){
+      if(!b.on) continue; active++;
+      b.acc+=dt*b.rate;
+      while(b.acc>=1 && b.on){b.acc-=1;this.grow(b)}
+    }
+  },
+  grow(b){
+    if(this.cells.length>1300){b.on=false;return}
+    const tip=b.tip, t=Math.min(1,b.depth/b.span), nr=Math.max(3.4*S,tip.tr*.965);
+    let placed=null;
+    for(let tries=0;tries<4&&!placed;tries++){
+      const ang=b.ang+b.curl+(Math.random()-.5)*.38+(tries?(tries%2?1:-1)*.45*Math.ceil(tries/2):0);
+      const d=(tip.tr+nr)*.8, nx=tip.x+Math.cos(ang)*d, ny=tip.y+Math.sin(ang)*d;
+      if(nx<nr||nx>W-nr||ny<nr||ny>H-nr) continue;
+      let hit=false;
+      for(const c of this.cells){ if(c===tip||c===tip.parent) continue;
+        const dx=c.x-nx,dy=c.y-ny,m=(c.tr+nr)*.78; if(dx*dx+dy*dy<m*m){hit=true;break} }
+      if(!hit) placed={nx,ny,ang};
+    }
+    if(!placed){b.on=false;return}
+    b.ang=placed.ang; b.depth++;
+    const h=b.hue+rand(-4,4);
+    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),
+      h:lerp(42,h,Math.min(1,t*2.2)),s:lerp(26,84,t),l:lerp(86,56,t),rot:placed.ang};
+    if(b.form==='long') c.sx=1+t*.9;
+    if(b.form==='ring' && t>.55) c.ring=true;
+    this.cells.push(c); b.tip=c;
+    if(b.depth>b.span*2.3){b.on=false;return}
+    if(b.depth>4 && Math.random()<.075 && this.branches.length<70){
+      const side=Math.random()<.5?-1:1;
+      this.branches.push({tip:c,ang:b.ang+side*rand(.5,.95),hue:(b.hue+side*rand(10,26)+360)%360,form:b.form,
+        depth:b.depth,span:b.span,acc:0,rate:b.rate*rand(.85,1.05),curl:-b.curl+rand(-.02,.02),on:true});
+    }
+  },
+  draw(){
+    ctx.lineCap='round';
+    for(const c of this.cells){ if(!c.parent) continue; const p=c.parent;
+      ctx.strokeStyle=`hsla(${c.h},${c.s}%,${c.l}%,.42)`; ctx.lineWidth=Math.min(p.r,c.r)*1.15;
+      ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(c.x,c.y);ctx.stroke();}
+    for(const c of this.cells) drawCell(c,c.r*(1+.03*Math.sin(clock*.035+c.ph)));
+  }
+};
+
+/* ---------- meiosis: male stem-cell line and female oocyte pool ---------- */
+const Meio={
+  cells:[], gametes:[], sources:[],
+  init(){
+    this.R=32*S; this.gametes=[];
+    const both=sexes.male&&sexes.female, wide=W>=H;
+    const spots=both?(wide?[[W*.3,cy],[W*.7,cy]]:[[cx,H*.3],[cx,H*.7]]):[[cx,cy]];
+    this.sources=[];
+    let i=0;
+    if(sexes.male){const [x,y]=spots[i++]; this.sources.push(this.male(x,y));}
+    if(sexes.female){const [x,y]=spots[i++]; this.sources.push(this.female(x,y));}
+  },
+  shift(dx,dy){for(const g of this.gametes){g.x+=dx;g.y+=dy} for(const s of this.sources){s.x+=dx;s.y+=dy; if(s.pool) for(const p of s.pool){p.x+=dx;p.y+=dy}}},
+  /* male: a stem cell that stays put, renews by mitosis, and sends one daughter into meiosis */
+  male(x,y){return{type:'m',x,y,h:168,state:'rest',t:0,ang:rand(0,6.28),kids:[]}},
+  /* female: a finite pool of resting oocytes, used one at a time, unequal divisions */
+  female(x,y){
+    const R=this.R, pr=R*.5, pool=[{x,y}];
+    for(let k=0;k<6;k++){const a=k/6*Math.PI*2; pool.push({x:x+Math.cos(a)*pr*2.05,y:y+Math.sin(a)*pr*2.05});}
+    pool.forEach(p=>{p.h=32+rand(-6,6);p.ph=rand(0,6)});
+    return{type:'f',x,y,h:32,pool,pr,state:'wait',t:40,act:null};
+  },
+  step(dt){
+    for(const s of this.sources){ s.t+=dt; s.type==='m'?this.stepM(s):this.stepF(s,dt); }
+    for(const g of this.gametes){
+      g.th+=(Math.random()-.5)*.09*dt; g.vx+=Math.cos(g.th)*.006*dt*g.mob; g.vy+=Math.sin(g.th)*.006*dt*g.mob;
+      g.vx*=Math.pow(.992,dt); g.vy*=Math.pow(.992,dt);
+      const sp=Math.hypot(g.vx,g.vy), mx=.42*g.mob; if(sp>mx){g.vx*=mx/sp;g.vy*=mx/sp}
+      g.x+=g.vx*dt; g.y+=g.vy*dt; g.spin+=.004*dt; g.age+=dt;
+      const m=g.r*3; if(g.x<-m)g.x=W+m; if(g.x>W+m)g.x=-m; if(g.y<-m)g.y=H+m; if(g.y>H+m)g.y=-m;
+      if(g.life&&g.age>g.life) g.fading=true;
+      if(g.fading){g.alpha-=.006*dt; if(g.life) g.r*=Math.pow(.997,dt);} else g.alpha=Math.min(1,g.alpha+.02*dt);
+    }
+    let live=this.gametes.filter(g=>!g.fading&&!g.life);
+    while(live.length>64){live[0].fading=true; live.shift();}
+    this.gametes=this.gametes.filter(g=>g.alpha>0);
+  },
+  stepM(s){
+    const T={rest:60,mito:90,m1:100,h:30,m2:100};
+    if(s.t<T[s.state]) return;
+    if(s.state==='rest'){s.state='mito'; s.ang+=2.39996; s.kh=s.h+rand(-4,4);}
+    else if(s.state==='mito'){s.state='m1'; s.kids=[0,1].map(()=>({h:s.kh+rand(-14,14)}));}
+    else if(s.state==='m1'){s.state='h';}
+    else if(s.state==='h'){s.state='m2'; s.kids=s.kids.flatMap(k=>[0,1].map(()=>({h:k.h+rand(-22,22),s:rand(60,74),l:rand(56,64)})));}
+    else if(s.state==='m2'){
+      const ps=this.posM(s), D=ps.D;
+      for(const p of ps.cells.slice(1)) this.release(p,D,1,0);
+      s.state='rest';
+    }
+    s.t=0;
+  },
+  posM(s){
+    const R=this.R, ax=Math.cos(s.ang), ay=Math.sin(s.ang), px=-ay, py=ax, P=Math.min(1,s.t/({rest:60,mito:90,m1:100,h:30,m2:100}[s.state]));
+    const stem={x:s.x,y:s.y,r:R*(1+.035*Math.sin(clock*.06)),h:s.h,s:58,l:56};
+    const out=[stem], bridges=[];
+    let D={x:s.x,y:s.y};
+    if(s.state==='mito'){
+      const p=ease(P), d=p*R*2.1;
+      D={x:s.x+ax*d,y:s.y+ay*d};
+      out.push({x:D.x,y:D.y,r:lerp(R*.55,R*.92,p),h:s.kh,s:58,l:57}); bridges.push([0,1]);
+    } else if(s.state!=='rest'){
+      const p1=s.state==='m1'?ease(P):1, p2=s.state==='m2'?ease(P):0;
+      const dd=R*2.1+p1*R*.9+p2*R*.4; D={x:s.x+ax*dd,y:s.y+ay*dd};
+      const r1=lerp(R*.92,R*.68,p1), o1=p1*R*.95, r2=lerp(R*.68,R*.46,p2), o2=p2*R*.68;
+      [-1,1].forEach((sg,i)=>{
+        const cxx=D.x+px*o1*sg, cyy=D.y+py*o1*sg;
+        if(s.state==='m2'){const base=out.length;
+          [-1,1].forEach((s2,j)=>{const k=s.kids[i*2+j]; out.push({x:cxx+ax*o2*s2,y:cyy+ay*o2*s2,r:r2,h:k.h,s:k.s,l:k.l});});
+          bridges.push([base,base+1]);}
+        else {const k=s.kids[i]; out.push({x:cxx,y:cyy,r:r1,h:k.h,s:64,l:58});}
+      });
+      if(s.state!=='m2') bridges.push([1,2]);
+    }
+    return {cells:out,bridges,D};
+  },
+  stepF(s,dt){
+    const T={wait:70,grow:110,m1:100,h:30,m2:100};
+    if(s.state==='done'||s.t<T[s.state]) return;
+    if(s.state==='wait'){
+      if(!s.pool.length){s.state='done';return}
+      const p=s.pool.splice(Math.floor(Math.random()*s.pool.length),1)[0];
+      let a=Math.atan2(p.y-s.y,p.x-s.x); if(Math.hypot(p.x-s.x,p.y-s.y)<1) a=rand(0,6.28);
+      s.act={x0:p.x,y0:p.y,ang:a,h:p.h,b1:a+(Math.random()<.5?1:-1)*rand(1.2,1.9),b2:0};
+      s.act.b2=s.act.b1+rand(2,2.6)*(Math.random()<.5?1:-1);
+      s.state='grow';
+    }
+    else if(s.state==='grow') s.state='m1';
+    else if(s.state==='m1') s.state='h';
+    else if(s.state==='h') s.state='m2';
+    else if(s.state==='m2'){
+      const ps=this.posF(s);
+      const egg=ps.cells[ps.egg];
+      this.release(egg,{x:s.x,y:s.y},.45,0);
+      ps.polar.forEach(i=>this.release(ps.cells[i],egg,.7,rand(200,320)));
+      s.act=null; s.state='wait';
+    }
+    s.t=0;
+  },
+  posF(s){
+    const R=this.R, out=[], bridges=[];
+    for(const p of s.pool) out.push({x:p.x,y:p.y,r:s.pr*(1+.03*Math.sin(clock*.04+p.ph)),h:p.h,s:34,l:48});
+    const res={cells:out,bridges,egg:-1,polar:[]};
+    const A=s.act; if(!A) return res;
+    const P=Math.min(1,s.t/({grow:110,m1:100,h:30,m2:100}[s.state]||1));
+    const g=s.state==='grow'?ease(P):1, ox=s.x+Math.cos(A.ang)*R*2.7, oy=s.y+Math.sin(A.ang)*R*2.7;
+    const ex=lerp(A.x0,ox,g), ey=lerp(A.y0,oy,g);
+    const eggR=s.state==='grow'?lerp(s.pr,R*1.15,g):s.state==='m1'?lerp(R*1.15,R*1.05,ease(P)):s.state==='m2'?lerp(R*1.05,R*.98,ease(P)):R*1.05;
+    const egg={x:ex,y:ey,r:eggR,h:A.h,s:lerp(34,66,g),l:lerp(48,60,g)};
+    res.egg=out.length; out.push(egg);
+    if(s.state==='m1'||s.state==='h'||s.state==='m2'){
+      const p1=s.state==='m1'?ease(P):1, pr1=lerp(R*.06,R*.3,p1), d1=lerp(egg.r*.7,egg.r+pr1*.9,p1);
+      const bx=egg.x+Math.cos(A.b1)*d1, by=egg.y+Math.sin(A.b1)*d1;
+      if(s.state==='m2'){
+        const p2=ease(P), tx=-Math.sin(A.b1), ty=Math.cos(A.b1), o=p2*R*.24, r=lerp(R*.3,R*.21,p2);
+        res.polar.push(out.length); out.push({x:bx+tx*o,y:by+ty*o,r,h:A.h+10,s:50,l:62});
+        res.polar.push(out.length); out.push({x:bx-tx*o,y:by-ty*o,r,h:A.h+16,s:50,l:62});
+        bridges.push([out.length-2,out.length-1]);
+        const pr2=lerp(R*.06,R*.27,p2), d2=lerp(egg.r*.7,egg.r+pr2*.9,p2);
+        res.polar.push(out.length); out.push({x:egg.x+Math.cos(A.b2)*d2,y:egg.y+Math.sin(A.b2)*d2,r:pr2,h:A.h+12,s:50,l:62});
+        bridges.push([res.egg,out.length-1]);
+      } else {
+        res.polar.push(out.length); out.push({x:bx,y:by,r:pr1,h:A.h+10,s:50,l:62});
+        if(s.state==='m1') bridges.push([res.egg,out.length-1]);
+      }
+    }
+    return res;
+  },
+  release(p,from,mob,life){
+    const a=Math.atan2(p.y-from.y,p.x-from.x);
+    this.gametes.push({x:p.x,y:p.y,r:p.r,h:p.h,s:p.s,l:p.l,vx:Math.cos(a)*.4*mob,vy:Math.sin(a)*.4*mob,
+      th:a,spin:rand(0,6),age:0,alpha:1,mob,life});
+  },
+  halo(x,y,r,h,a){
+    const g=ctx.createRadialGradient(x,y,r*.6,x,y,r*2.6);
+    g.addColorStop(0,`hsla(${h},80%,62%,${.16*a})`);g.addColorStop(1,`hsla(${h},80%,62%,0)`);
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r*2.6,0,Math.PI*2);ctx.fill();
+  },
+  drawSet(ps){
+    ctx.lineCap='round';
+    for(const [i,j] of ps.bridges){const a=ps.cells[i],b=ps.cells[j];
+      const w=Math.min(a.r,b.r)*(1.4-Math.hypot(a.x-b.x,a.y-b.y)/(a.r+b.r));
+      if(w>.5){ctx.strokeStyle=`hsla(${b.h},60%,58%,.5)`;ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}}
+    for(const c of ps.cells){this.halo(c.x,c.y,c.r,c.h,.7); drawCell(c,c.r);}
+  },
+  draw(){
+    ctx.globalCompositeOperation='lighter';
+    for(const g of this.gametes) this.halo(g.x,g.y,g.r,g.h,g.alpha);
+    ctx.globalCompositeOperation='source-over';
+    for(const g of this.gametes) drawCell(g,g.r*(1+.05*Math.sin(clock*.05+g.spin*3)),{alpha:Math.max(0,g.alpha)});
+    for(const s of this.sources) this.drawSet(s.type==='m'?this.posM(s):this.posF(s));
+  }
+};
+
+/* ---------- loop & controls ---------- */
+function bg(){
+  ctx.fillStyle='#0a0f15';ctx.fillRect(0,0,W,H);
+  const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(W,H)*.7);
+  g.addColorStop(0,'rgba(40,62,80,.22)');g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+}
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(3,(now-last)/16.667); last=now;
+  clock+=dt;
+  if(mode&&running) mode.step(dt);
+  bg(); if(mode) mode.draw();
+  requestAnimationFrame(frame);
+}
+function setPlay(on){running=on;ico.firstElementChild.setAttribute('d',on?PAUSE:PLAY);playBtn.setAttribute('aria-label',on?'Pause':'Play')}
+const MODES={diff:Diff,mito:Mito,meio:Meio};
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-pressed',x===b?'true':'false'));
+  S=Math.max(.55,Math.min(1.4,Math.min(W,H)/700));
+  mode=MODES[b.dataset.mode]; mode.init(); setPlay(false); playBtn.hidden=false; document.getElementById('opt-mito').hidden=mode!==Mito; document.getElementById('opt-meio').hidden=mode!==Meio;
+}));
+['sex-m','sex-f'].forEach(id=>document.getElementById(id).addEventListener('change',e=>{
+  const m=document.getElementById('sex-m'), f=document.getElementById('sex-f');
+  if(!m.checked&&!f.checked){e.target.checked=true;return}
+  sexes.male=m.checked; sexes.female=f.checked;
+  if(mode===Meio) Meio.init();
+}));
+document.getElementById('apo-box').addEventListener('change',e=>{apoptosis=e.target.checked});
+playBtn.addEventListener('click',()=>setPlay(!running));
+window.addEventListener('resize',resize);
+resize(); requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
