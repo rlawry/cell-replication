@@ -103,19 +103,20 @@ const Mito={
     this.cells=[this.mk(cx,cy,this.R*1.25,this.R*1.25)];
     this.cells[0].cyc=60;
   },
-  mk(x,y,r,tr){return{x,y,r,tr,h:this.hue+rand(-5,5),s:rand(48,60),l:rand(46,58),cyc:rand(150,260),ph:rand(0,6.28),div:0,lim:Math.floor(rand(2,5)),dying:0}},
-  step(dt){
+  mk(x,y,r,tr){return{x,y,r,tr,h:this.hue+rand(-5,5),s:rand(48,60),l:rand(46,58),cyc:rand(150,260),ph:rand(0,6.28),div:0,lim:Math.floor(rand(2,5)),age:0,life:rand(900,1700),dying:0}},
+  step(dt){ dt=Math.min(dt,2); while(dt>0){const d=Math.min(1,dt); this.tick(d); dt-=d;} },
+  tick(dt){
     const cs=this.cells, R=this.R, m=R*2;
     let on=0; for(const c of cs) if(c.x>-m&&c.x<W+m&&c.y>-m&&c.y<H+m) on++;
-    const room=on < (W+2*m)*(H+2*m)/(Math.PI*R*R*.62);
+    const room=on < (W+2*m)*(H+2*m)/(Math.PI*R*R*.72);
     const born=[];
     for(const c of cs){
       if(c.dying){c.dying+=dt;c.r*=Math.pow(.9,dt);continue}
       c.r+=(c.tr-c.r)*.05*dt;
-      c.cyc-=dt;
+      c.cyc-=dt; c.age+=dt;
       if(c.cyc<=0){
         c.cyc=rand(160,280);
-        if(apoptosis&&c.div>=c.lim){c.dying=1;continue}
+        if(apoptosis&&(c.div>=c.lim||c.age>c.life)){c.dying=1;continue}
         const vis=c.x>-R&&c.x<W+R&&c.y>-R&&c.y<H+R;
         if(room&&vis){
           const a=rand(0,Math.PI*2), d=c.r*.35;
@@ -129,11 +130,13 @@ const Mito={
     }
     for(const n of born) cs.push(n);
     const far=R*6;
-    const list=this.cells=cs.filter(c=>!(c.dying&&c.r<1)&&(cs.length<50||(c.x>-far&&c.x<W+far&&c.y>-far&&c.y<H+far)));
+    const list=this.cells=cs.filter(c=>!(c.dying&&c.r<1));
     const n=list.length; if(!n) return;
     let mx=0,my=0;for(const c of list){mx+=c.x;my+=c.y} mx/=n;my/=n;
-    const k=n<300?.0025:.0012;
-    for(const c of list){c.x+=(cx-mx)*.02*dt+(cx-c.x)*k*dt;c.y+=(cy-my)*.02*dt+(cy-c.y)*k*dt;}
+    // cohesion fades out as the blob approaches the screen size, so a full screen isn't squeezed toward the middle
+    const blobR=R*Math.sqrt(n/.8), span=Math.min(W,H)*.5, k=.0025*Math.max(0,1-blobR/span), drift=k>0?.02:0;
+    for(const c of list){c.x+=((cx-mx)*drift+(cx-c.x)*k)*dt;c.y+=((cy-my)*drift+(cy-c.y)*k)*dt;
+      const wm=R*1.2; if(c.x<-wm)c.x+=(-wm-c.x)*.3; if(c.x>W+wm)c.x-=(c.x-W-wm)*.3; if(c.y<-wm)c.y+=(-wm-c.y)*.3; if(c.y>H+wm)c.y-=(c.y-H-wm)*.3;}
     // uniform-grid repulsion with typed arrays (one pass, each pair once)
     const size=R*2.4, ox=-far, oy=-far, cols=Math.ceil((W+2*far)/size)+1, rows=Math.ceil((H+2*far)/size)+1, nc=cols*rows;
     if(!this.head||this.head.length<nc) this.head=new Int32Array(nc);
@@ -141,7 +144,7 @@ const Mito={
     const head=this.head, next=this.next; head.fill(-1,0,nc);
     const gxOf=x=>Math.max(0,Math.min(cols-1,Math.floor((x-ox)/size))), gyOf=y=>Math.max(0,Math.min(rows-1,Math.floor((y-oy)/size)));
     for(let i=0;i<n;i++){const c=list[i], g=gyOf(c.y)*cols+gxOf(c.x); next[i]=head[g]; head[g]=i;}
-    const f=.25*Math.min(dt,2);
+    const f=.25*dt;
     for(let i=0;i<n;i++){
       const a=list[i], gx=gxOf(a.x), gy=gyOf(a.y);
       for(let yy=Math.max(0,gy-1);yy<=Math.min(rows-1,gy+1);yy++)
@@ -188,7 +191,7 @@ const Mito={
 const Diff={
   cells:[],
   init(){
-    this.R0=19*S; this.t=0; this.phase=0; this.ring=[]; this.branches=[];
+    this.R0=19*S; this.base=this.R0*.62; this.t=0; this.phase=0; this.ring=[]; this.branches=[];
     this.z={x:cx,y:cy,r:this.R0,tr:this.R0,h:42,s:28,l:86,parent:null,ph:0};
     this.cells=[this.z];
     const pal=[350,24,50,138,184,222,276,312].sort(()=>Math.random()-.5);
@@ -208,7 +211,8 @@ const Diff={
         this.phase=1;
         const forms=['round','long','ring','long','round','ring'];
         this.ring.forEach((c,i)=>{
-          this.branches.push({tip:c,ang:c.a,hue:this.pal[i],form:forms[i],depth:0,span:rand(16,24),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
+          this.branches.push({tip:c,ang:c.a,hue:this.pal[i],form:forms[i],level:1,seg:0,segLen:Math.round(rand(5,8)),
+            termF:rand(.6,1.15),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
         });
       }
       return;
@@ -220,9 +224,11 @@ const Diff={
       while(b.acc>=1 && b.on){b.acc-=1;this.grow(b)}
     }
   },
+  // commitment stages: flat color within a stage, a distinct step at every fork
+  stage(level){return [null,{s:38,l:78},{s:56,l:68},{s:70,l:61},{s:86,l:55}][Math.min(4,level)]},
   grow(b){
     if(this.cells.length>1300){b.on=false;return}
-    const tip=b.tip, t=Math.min(1,b.depth/b.span), nr=Math.max(3.4*S,tip.tr*.965);
+    const tip=b.tip, term=b.level>=4, nr=term?this.base*b.termF:this.base;
     let placed=null;
     for(let tries=0;tries<4&&!placed;tries++){
       const ang=b.ang+b.curl+(Math.random()-.5)*.38+(tries?(tries%2?1:-1)*.45*Math.ceil(tries/2):0);
@@ -234,19 +240,19 @@ const Diff={
       if(!hit) placed={nx,ny,ang};
     }
     if(!placed){b.on=false;return}
-    b.ang=placed.ang; b.depth++;
-    const h=b.hue+rand(-4,4);
-    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),
-      h:lerp(42,h,Math.min(1,t*2.2)),s:lerp(26,84,t),l:lerp(86,56,t),rot:placed.ang};
-    if(b.form==='long') c.sx=1+t*.9;
-    if(b.form==='ring' && t>.55) c.ring=true;
-    this.cells.push(c); b.tip=c;
-    if(b.depth>b.span*2.3){b.on=false;return}
-    if(b.depth>4 && Math.random()<.075 && this.branches.length<70){
-      const side=Math.random()<.5?-1:1;
-      this.branches.push({tip:c,ang:b.ang+side*rand(.5,.95),hue:(b.hue+side*rand(10,26)+360)%360,form:b.form,
-        depth:b.depth,span:b.span,acc:0,rate:b.rate*rand(.85,1.05),curl:-b.curl+rand(-.02,.02),on:true});
-    }
+    b.ang=placed.ang;
+    const st=this.stage(b.level);
+    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),h:b.hue,s:st.s,l:st.l,rot:placed.ang};
+    if(term){ if(b.form==='long') c.sx=1.8; if(b.form==='ring') c.ring=true; }
+    this.cells.push(c); b.tip=c; b.seg++;
+    if(b.seg<b.segLen) return;
+    if(term){b.on=false;return}
+    // commitment point: the lineage splits into two more specialized types
+    const side=Math.random()<.5?-1:1, dh=rand(14,26), next=b.level+1;
+    const nl=next>=4?Math.round(rand(4,8)):Math.round(rand(4,7));
+    if(this.branches.length<80) this.branches.push({tip:c,ang:b.ang+side*rand(.55,.9),hue:(b.hue+side*dh+360)%360,form:b.form,
+      level:next,seg:0,segLen:nl,termF:b.termF*rand(.85,1.15),acc:0,rate:b.rate*rand(.9,1.05),curl:-b.curl+rand(-.02,.02),on:true});
+    b.level=next; b.hue=(b.hue-side*dh+360)%360; b.ang-=side*rand(.15,.35); b.seg=0; b.segLen=Math.round(rand(4,8));
   },
   draw(){
     ctx.lineCap='round';
