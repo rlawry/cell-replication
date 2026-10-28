@@ -109,7 +109,7 @@ const Mito={
   tick(dt){
     const cs=this.cells, R=this.R, m=R*2;
     let on=0; for(const c of cs) if(c.x>-m&&c.x<W+m&&c.y>-m&&c.y<H+m) on++;
-    const room=on < this.density*(W+2*m)*(H+2*m)/(Math.PI*R*R*.72);
+    const room=on < this.density*(W+2*m)*(H+2*m)/(Math.PI*R*R*.6);
     const born=[];
     for(const c of cs){
       if(c.dying){c.dying+=dt;c.r*=Math.pow(.9,dt);continue}
@@ -119,7 +119,7 @@ const Mito={
         c.cyc=rand(160,280);
         if(apoptosis&&(c.div>=c.lim||c.age>c.life)){c.dying=1;continue}
         const vis=c.x>-R&&c.x<W+R&&c.y>-R&&c.y<H+R;
-        if(room&&vis){
+        if(room&&vis&&(c.nb??0)<=5){
           const a=rand(0,Math.PI*2), d=c.r*.35;
           c.tr=R; c.div++;
           const n=this.mk(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,c.r*.55,R);
@@ -146,14 +146,17 @@ const Mito={
     const gxOf=x=>Math.max(0,Math.min(cols-1,Math.floor((x-ox)/size))), gyOf=y=>Math.max(0,Math.min(rows-1,Math.floor((y-oy)/size)));
     for(let i=0;i<n;i++){const c=list[i], g=gyOf(c.y)*cols+gxOf(c.x); next[i]=head[g]; head[g]=i;}
     const f=.25*dt;
+    for(const c of list) c.nb=0;
     for(let i=0;i<n;i++){
       const a=list[i], gx=gxOf(a.x), gy=gyOf(a.y);
       for(let yy=Math.max(0,gy-1);yy<=Math.min(rows-1,gy+1);yy++)
       for(let xx=Math.max(0,gx-1);xx<=Math.min(cols-1,gx+1);xx++){
         for(let j=head[yy*cols+xx];j!==-1;j=next[j]){ if(j<=i) continue;
           const b=list[j], dx=b.x-a.x, dy=b.y-a.y, mm=(a.r+b.r)*.86;
-          if(dx>mm||dx<-mm||dy>mm||dy<-mm) continue;
-          const d2=dx*dx+dy*dy; if(d2>=mm*mm) continue;
+          const mc=mm*1.22; if(dx>mc||dx<-mc||dy>mc||dy<-mc) continue;
+          const d2=dx*dx+dy*dy; if(d2>=mc*mc) continue;
+          if(!a.dying&&!b.dying){a.nb++;b.nb++;}
+          if(d2>=mm*mm) continue;
           const d=Math.sqrt(d2)||.01, p=(mm-d)/d*f;
           a.x-=dx*p;a.y-=dy*p;b.x+=dx*p;b.y+=dy*p;
         }
@@ -457,7 +460,10 @@ document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()
   sexes.male=m.checked; sexes.female=f.checked;
   if(mode===Meio) Meio.init();
 }));
-document.getElementById('apo-box').addEventListener('change',e=>{apoptosis=e.target.checked});
+document.getElementById('apo-box').addEventListener('change',e=>{
+  apoptosis=e.target.checked;
+  if(apoptosis) for(const c of Mito.cells){ if(c.dying) continue; c.div=Math.floor(rand(0,c.lim)); c.age=rand(0,c.life*.6); }
+});
 playBtn.addEventListener('click',()=>setPlay(!running));
 window.addEventListener('resize',resize);
 resize(); requestAnimationFrame(frame);
