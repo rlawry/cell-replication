@@ -96,6 +96,16 @@ function drawCellOn(ctx, c, r, opt={}){
 /* ---------- chromosomes: matched pairs in body cells, one of each pair after meiosis ---------- */
 const TONE={A:'#ffd76e',B:'#86ceff'};
 const DIPLOID=[.66,1,.44].map(len=>({len,homs:[[{t:'A'}],[{t:'B'}]]}));
+const COPIED=DIPLOID.map(gr=>({len:gr.len,homs:gr.homs.map(h=>[{...h[0]},{...h[0]}])}));
+const SPLIT=40;
+function drawNeck(a,b,t){
+  if(!a||t>=1) return;
+  const w=Math.min(a.r,b.r)*1.25*Math.pow(1-t,.7); if(w<.6) return;
+  ctx.lineCap='round'; ctx.strokeStyle=`hsl(${b.h},${b.s}%,${b.l}%)`; ctx.lineWidth=w;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+}
+function tickSplit(c,dt){ if(c.bt!==undefined){ c.bt+=dt; if(c.bt>SPLIT){c.bt=undefined; c.par=null;} } }
+function setCopied(c,on){ if(c.dbl!==on){c.dbl=on; c.g=on?COPIED:DIPLOID;} }
 function replicate(gen){return gen.map(gr=>({len:gr.len,homs:gr.homs.map(h=>[{...h[0]},{...h[0]}])}))}
 function meiosis(dip){
   const rep=replicate(dip);
@@ -151,19 +161,22 @@ const Mito={
     const room=on < this.density*(W+2*m)*(H+2*m)/(Math.PI*R*R*.6);
     const born=[];
     for(const c of cs){
+      tickSplit(c,dt);
       if(c.dying){c.dying+=dt;c.r*=Math.pow(.9,dt);continue}
       c.r+=(c.tr-c.r)*.05*dt;
       c.cyc-=dt; c.age+=dt;
+      if(c.cyc<55&&c.cyc>0) c.dbl=true;
       if(c.cyc<=0){
-        c.cyc=rand(160,280);
+        c.cyc=rand(160,280); c.dbl=false;
         if(apoptosis&&(c.div>=c.lim||c.age>c.life)){c.dying=1;continue}
         const vis=c.x>-R&&c.x<W+R&&c.y>-R&&c.y<H+R;
         if(room&&vis&&(c.nb??0)<=5){
-          const a=rand(0,Math.PI*2), d=c.r*.35;
-          c.tr=R; c.div++;
-          const n=this.mk(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,c.r*.55,R);
+          const a=rand(0,Math.PI*2), d=R*.4;
+          c.tr=R; c.div++; c.r=R*.74;
+          const n=this.mk(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,R*.74,R);
           n.h=c.h+rand(-2,2); n.l=Math.max(40,Math.min(64,c.l+rand(-3,3)));
-          c.x-=Math.cos(a)*d*.5;c.y-=Math.sin(a)*d*.5;
+          n.par=c; n.bt=0;
+          c.x-=Math.cos(a)*d;c.y-=Math.sin(a)*d;
           born.push(n);
         }
       }
@@ -204,18 +217,20 @@ const Mito={
   },
   sprite(c){
     const h=Math.round(c.h), s=Math.round(c.s/4)*4, l=Math.round(c.l/2)*2, key=h+'|'+s+'|'+l;
-    let sp=this.sprites.get(key);
+    const dbl=!!c.dbl; const key2=key+(dbl?'|d':'');
+    let sp=this.sprites.get(key2);
     if(!sp){
       const dpr=DPR(), base=this.R, px=Math.ceil(base*2*dpr)+4;
       sp=document.createElement('canvas'); sp.width=sp.height=px;
       const g=sp.getContext('2d'); g.scale(px/(base*2+4/dpr),px/(base*2+4/dpr));
-      const o={x:base+2/dpr,y:base+2/dpr,h,s,l,g:DIPLOID};
+      const o={x:base+2/dpr,y:base+2/dpr,h,s,l,g:dbl?COPIED:DIPLOID};
       drawCellOn(g,o,base);
-      sp.base=base; sp.pad=2/dpr; this.sprites.set(key,sp);
+      sp.base=base; sp.pad=2/dpr; this.sprites.set(key2,sp);
     }
     return sp;
   },
   draw(){
+    for(const c of this.cells) if(c.bt!==undefined&&c.par&&!c.par.dying) drawNeck(c.par,c,c.bt/SPLIT);
     for(const c of this.cells){
       const big=this.cells.length>400, r=big?c.r:c.r*(1+.025*Math.sin(clock*.04+c.ph));
       if(c.x<-r||c.x>W+r||c.y<-r||c.y>H+r) continue;
@@ -243,20 +258,22 @@ const Diff={
   },
   step(dt){
     this.t+=dt;
-    for(const c of this.cells) c.r+=(c.tr-c.r)*.08*dt;
+    for(const c of this.cells){ c.r+=(c.tr-c.r)*.08*dt; tickSplit(c,dt);
+      if(c.tx!==undefined){ c.x+=(c.tx-c.x)*.14*dt; c.y+=(c.ty-c.y)*.14*dt; if(Math.abs(c.tx-c.x)+Math.abs(c.ty-c.y)<.4){c.x=c.tx;c.y=c.ty;c.tx=undefined;} } }
     if(this.phase===0){
-      const k=Math.floor(this.t/16);
+      const k=Math.floor(this.t/34);
+      setCopied(this.z, this.ring.length<6 && (this.t%34)>18);
       while(this.ring.length<Math.min(6,k)){
         const i=this.ring.length, a=this.off+i/6*Math.PI*2, d=this.R0*1.6;
-        const c={x:cx+Math.cos(a)*d,y:cy+Math.sin(a)*d,r:2,tr:this.R0*.82,h:42+rand(-6,6),s:30,l:84,parent:this.z,ph:rand(0,6),a,g:DIPLOID};
-        this.cells.push(c); this.ring.push(c);
+        const c={x:cx+Math.cos(a)*this.R0*.3,y:cy+Math.sin(a)*this.R0*.3,tx:cx+Math.cos(a)*d,ty:cy+Math.sin(a)*d,r:this.R0*.62,tr:this.R0*.82,h:42+rand(-6,6),s:30,l:84,parent:this.z,par:this.z,bt:0,ph:rand(0,6),a,g:DIPLOID};
+        this.z.r=this.R0*.8; this.cells.push(c); this.ring.push(c);
       }
-      if(this.ring.length===6 && this.t>130){
+      if(this.ring.length===6 && this.t>6*34+40){
         this.phase=1;
         const forms=['round','long','ring','long','round','ring'];
         this.ring.forEach((c,i)=>{
           this.branches.push({tip:c,ang:c.a,hue:this.pal[i],form:forms[i],level:1,seg:0,segLen:Math.round(rand(5,8)),
-            termF:rand(.85,1.2),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
+            termF:rand(.85,1.2),acc:0,rate:rand(.022,.032),curl:rand(-.03,.03),on:true});
         });
       }
       return;
@@ -265,28 +282,32 @@ const Diff={
     for(const b of [...this.branches]){
       if(!b.on) continue; active++;
       b.acc+=dt*b.rate;
+      setCopied(b.tip, b.acc>.55 && b.acc<1 && this.cells.length<1300);
       while(b.acc>=1 && b.on){b.acc-=1;this.grow(b)}
     }
   },
   // commitment stages: flat color within a stage, a distinct step at every fork
   stage(level){return [null,{s:38,l:78},{s:56,l:68},{s:70,l:61},{s:86,l:55}][Math.min(4,level)]},
   grow(b){
+    const px0=t=>t.x, py0=t=>t.y;
     if(this.cells.length>1300){b.on=false;return}
     const tip=b.tip, term=b.level>=4, nr=term?this.base*b.termF:this.base;
     let placed=null;
     for(let tries=0;tries<4&&!placed;tries++){
       const ang=b.ang+b.curl+(Math.random()-.5)*.38+(tries?(tries%2?1:-1)*.45*Math.ceil(tries/2):0);
-      const d=(tip.tr+nr)*.8, nx=tip.x+Math.cos(ang)*d, ny=tip.y+Math.sin(ang)*d;
+      const px=tip.tx??tip.x, py=tip.ty??tip.y, d=(tip.tr+nr)*.8, nx=px+Math.cos(ang)*d, ny=py+Math.sin(ang)*d;
       if(nx<nr||nx>W-nr||ny<nr||ny>H-nr) continue;
       let hit=false;
       for(const c of this.cells){ if(c===tip||c===tip.parent) continue;
-        const dx=c.x-nx,dy=c.y-ny,m=(c.tr+nr)*.78; if(dx*dx+dy*dy<m*m){hit=true;break} }
+        const dx=(c.tx??c.x)-nx,dy=(c.ty??c.y)-ny,m=(c.tr+nr)*.78; if(dx*dx+dy*dy<m*m){hit=true;break} }
       if(!hit) placed={nx,ny,ang};
     }
     if(!placed){b.on=false;return}
     b.ang=placed.ang;
     const st=this.stage(b.level);
-    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),h:b.hue,s:st.s,l:st.l,rot:placed.ang,g:DIPLOID};
+    setCopied(tip,false);
+    tip.r=tip.tr*.74;
+    const c={x:px0(tip),y:py0(tip),tx:placed.nx,ty:placed.ny,r:tip.tr*.74,tr:nr,parent:tip,par:tip,bt:0,ph:rand(0,6),h:b.hue,s:st.s,l:st.l,rot:placed.ang,g:DIPLOID};
     if(term){ if(b.form==='long') c.sx=1.8; if(b.form==='ring') c.ring=true; }
     this.cells.push(c); b.tip=c; b.seg++;
     if(b.seg<b.segLen) return;
@@ -303,6 +324,7 @@ const Diff={
     for(const c of this.cells){ if(!c.parent) continue; const p=c.parent;
       ctx.strokeStyle=`hsla(${c.h},${c.s}%,${c.l}%,.42)`; ctx.lineWidth=Math.min(p.r,c.r)*1.15;
       ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(c.x,c.y);ctx.stroke();}
+    for(const c of this.cells) if(c.bt!==undefined) drawNeck(c.par,c,c.bt/SPLIT);
     for(const c of this.cells) drawCell(c,c.r*(1+.03*Math.sin(clock*.035+c.ph)));
   }
 };
