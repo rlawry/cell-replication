@@ -36,6 +36,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .opt:hover{color:var(--fg)}
 @media (max-width:520px){.opts{left:auto;right:max(16px, env(safe-area-inset-right, 0px));bottom:calc(100px + env(safe-area-inset-bottom, 0px));height:auto;flex-direction:column;align-items:flex-start;gap:14px}.opt{letter-spacing:.1em}}
 @media (max-width:420px){nav button{font-size:10px;letter-spacing:.12em}}
+[hidden]{display:none!important}
 </style>
 
 <nav>
@@ -86,14 +87,52 @@ function drawCellOn(ctx, c, r, opt={}){
   g.addColorStop(1,`hsl(${h},${s}%,${Math.max(8,l-16)}%)`);
   ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
   ctx.lineWidth=1;ctx.strokeStyle=`hsla(${h},${s}%,${Math.min(95,l+24)}%,.45)`;ctx.stroke();
-  if(c.ring){ctx.beginPath();ctx.arc(0,0,r*.5,0,Math.PI*2);ctx.fillStyle=`hsla(${h},${s}%,${Math.max(6,l-30)}%,.85)`;ctx.fill();}
-  else if(c.dots){
-    ctx.fillStyle=`hsla(${h},${Math.min(100,s+10)}%,${Math.max(10,l-28)}%,.9)`;
-    const n=c.dots, rr=n===1?0:r*.32, dr=r*(n===1?.26:.16);
-    for(let i=0;i<n;i++){const t=i/n*Math.PI*2+(c.spin||0);ctx.beginPath();ctx.arc(Math.cos(t)*rr,Math.sin(t)*rr,dr,0,Math.PI*2);ctx.fill();}
-  }
+  if(c.ring){ctx.beginPath();ctx.arc(0,0,r*.8,0,Math.PI*2);ctx.lineWidth=r*.16;ctx.strokeStyle=`hsla(${h},${s}%,${Math.max(6,l-26)}%,.8)`;ctx.stroke();}
+  if(c.g){ ctx.restore(); ctx.save(); ctx.translate(c.x,c.y); ctx.globalAlpha=a; drawGenome(ctx,c.g,r*Math.min(1,1/Math.sqrt(sx))); }
   else if(r>4){ctx.beginPath();ctx.arc(r*.08,r*.06,r*.3,0,Math.PI*2);ctx.fillStyle=`hsla(${h},${s}%,${Math.max(8,l-24)}%,.75)`;ctx.fill();}
   ctx.restore();
+}
+
+/* ---------- chromosomes: matched pairs in body cells, one of each pair after meiosis ---------- */
+const TONE={A:'#ffd76e',B:'#86ceff'};
+const DIPLOID=[.66,1,.44].map(len=>({len,homs:[[{t:'A'}],[{t:'B'}]]}));
+function replicate(gen){return gen.map(gr=>({len:gr.len,homs:gr.homs.map(h=>[{...h[0]},{...h[0]}])}))}
+function meiosis(dip){
+  const rep=replicate(dip);
+  // crossing over between non-sister chromatids
+  for(const gr of rep) if(Math.random()<.8){
+    const cut=rand(.42,.72), a=gr.homs[0][1], b=gr.homs[1][0], at=a.t, bt=b.t;
+    a.tip={t:bt,cut}; b.tip={t:at,cut};
+  }
+  // meiosis I: partners separate, each cell gets one of each pair
+  const mi=[[],[]];
+  for(const gr of rep){const f=Math.random()<.5?0:1; mi[0].push({len:gr.len,homs:[gr.homs[f]]}); mi[1].push({len:gr.len,homs:[gr.homs[1-f]]});}
+  // meiosis II: sister copies separate
+  const mii=mi.flatMap(gen=>{const a=[],b=[];
+    for(const gr of gen){const f=Math.random()<.5?0:1; a.push({len:gr.len,homs:[[gr.homs[0][f]]]}); b.push({len:gr.len,homs:[[gr.homs[0][1-f]]]});}
+    return [a,b];});
+  return {rep,mi,mii};
+}
+function drawGenome(ctx,gen,r){
+  const nr=r*.66;
+  ctx.beginPath();ctx.arc(0,0,nr,0,Math.PI*2);ctx.fillStyle='rgba(8,12,18,.82)';ctx.fill();
+  if(nr<2.6) return;
+  const DBL=1.7, PAIR=.45, GROUP=1.2;
+  const items=[]; let u=0;
+  gen.forEach((gr,gi)=>{ if(gi) u+=GROUP; gr.homs.forEach((hm,hi)=>{ if(hi) u+=PAIR; const w=hm.length===2?DBL:1; items.push({u,w,hm,len:gr.len}); u+=w; }); });
+  const bw=Math.max(.9,Math.min(nr*.15,nr*1.6/u)), x0=-u*bw/2, L=nr*1.25;
+  const strand=(cd,x,y0,len,w)=>{
+    if(cd.tip){const yc=y0+len*cd.tip.cut; ctx.fillStyle=TONE[cd.t]; ctx.fillRect(x,y0,w,yc-y0); ctx.fillStyle=TONE[cd.tip.t]; ctx.fillRect(x,yc,w,y0+len-yc);}
+    else {ctx.fillStyle=TONE[cd.t]; ctx.fillRect(x,y0,w,len);}
+  };
+  for(const it of items){
+    const len=L*it.len, y0=-len/2, x=x0+it.u*bw;
+    if(it.hm.length===2){ // two joined copies: split bar pinched at the centromere
+      const w=it.w*bw/2, gap=Math.max(.6,bw*.18);
+      strand(it.hm[0],x,y0,len,w-gap/2); strand(it.hm[1],x+w+gap/2,y0,len,w-gap/2);
+      ctx.fillStyle=TONE[it.hm[0].t]; ctx.fillRect(x+w-gap,y0+len*.3-bw*.4,gap*2,bw*.8);
+    } else strand(it.hm[0],x,y0,len,bw);
+  }
 }
 
 /* ---------- mitosis: cohesive blob, divides until the screen is covered ---------- */
@@ -170,7 +209,7 @@ const Mito={
       const dpr=DPR(), base=this.R, px=Math.ceil(base*2*dpr)+4;
       sp=document.createElement('canvas'); sp.width=sp.height=px;
       const g=sp.getContext('2d'); g.scale(px/(base*2+4/dpr),px/(base*2+4/dpr));
-      const o={x:base+2/dpr,y:base+2/dpr,h,s,l};
+      const o={x:base+2/dpr,y:base+2/dpr,h,s,l,g:DIPLOID};
       drawCellOn(g,o,base);
       sp.base=base; sp.pad=2/dpr; this.sprites.set(key,sp);
     }
@@ -181,7 +220,7 @@ const Mito={
       const big=this.cells.length>400, r=big?c.r:c.r*(1+.025*Math.sin(clock*.04+c.ph));
       if(c.x<-r||c.x>W+r||c.y<-r||c.y>H+r) continue;
       if(c.dying){const t=Math.min(1,c.dying/28);
-        drawCell({x:c.x,y:c.y,h:c.h+t*-20,s:c.s*(1-t*.8),l:c.l-t*22},r,{alpha:1-t*.7});
+        drawCell({x:c.x,y:c.y,h:c.h+t*-20,s:c.s*(1-t*.8),l:c.l-t*22,g:DIPLOID},r,{alpha:1-t*.7});
         if(t>.3){ctx.fillStyle=`hsla(${c.h},20%,${c.l-10}%,${.5*(1-t)})`;
           for(let i=0;i<5;i++){const a=i*1.257+c.ph, d=r*(1+t*1.4);ctx.beginPath();ctx.arc(c.x+Math.cos(a)*d,c.y+Math.sin(a)*d,r*.22*(1-t*.5),0,7);ctx.fill()}}
         continue}
@@ -196,8 +235,8 @@ const Mito={
 const Diff={
   cells:[],
   init(){
-    this.R0=19*S; this.base=this.R0*.62; this.t=0; this.phase=0; this.ring=[]; this.branches=[];
-    this.z={x:cx,y:cy,r:this.R0,tr:this.R0,h:42,s:28,l:86,parent:null,ph:0};
+    this.R0=22*S; this.base=this.R0*.76; this.t=0; this.phase=0; this.ring=[]; this.branches=[];
+    this.z={x:cx,y:cy,r:this.R0,tr:this.R0,h:42,s:28,l:86,parent:null,ph:0,g:DIPLOID};
     this.cells=[this.z];
     const pal=[350,24,50,138,184,222,276,312].sort(()=>Math.random()-.5);
     this.pal=pal; this.off=rand(0,Math.PI*2);
@@ -209,7 +248,7 @@ const Diff={
       const k=Math.floor(this.t/16);
       while(this.ring.length<Math.min(6,k)){
         const i=this.ring.length, a=this.off+i/6*Math.PI*2, d=this.R0*1.6;
-        const c={x:cx+Math.cos(a)*d,y:cy+Math.sin(a)*d,r:2,tr:this.R0*.82,h:42+rand(-6,6),s:30,l:84,parent:this.z,ph:rand(0,6),a};
+        const c={x:cx+Math.cos(a)*d,y:cy+Math.sin(a)*d,r:2,tr:this.R0*.82,h:42+rand(-6,6),s:30,l:84,parent:this.z,ph:rand(0,6),a,g:DIPLOID};
         this.cells.push(c); this.ring.push(c);
       }
       if(this.ring.length===6 && this.t>130){
@@ -217,7 +256,7 @@ const Diff={
         const forms=['round','long','ring','long','round','ring'];
         this.ring.forEach((c,i)=>{
           this.branches.push({tip:c,ang:c.a,hue:this.pal[i],form:forms[i],level:1,seg:0,segLen:Math.round(rand(5,8)),
-            termF:rand(.6,1.15),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
+            termF:rand(.85,1.2),acc:0,rate:rand(.09,.14),curl:rand(-.03,.03),on:true});
         });
       }
       return;
@@ -247,7 +286,7 @@ const Diff={
     if(!placed){b.on=false;return}
     b.ang=placed.ang;
     const st=this.stage(b.level);
-    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),h:b.hue,s:st.s,l:st.l,rot:placed.ang};
+    const c={x:placed.nx,y:placed.ny,r:nr*.3,tr:nr,parent:tip,ph:rand(0,6),h:b.hue,s:st.s,l:st.l,rot:placed.ang,g:DIPLOID};
     if(term){ if(b.form==='long') c.sx=1.8; if(b.form==='ring') c.ring=true; }
     this.cells.push(c); b.tip=c; b.seg++;
     if(b.seg<b.segLen) return;
@@ -272,7 +311,7 @@ const Diff={
 const Meio={
   cells:[], gametes:[], sources:[],
   init(){
-    this.R=32*S; this.gametes=[];
+    this.R=40*S; this.gametes=[];
     const both=sexes.male&&sexes.female, wide=W>=H;
     const spots=both?(wide?[[W*.3,cy],[W*.7,cy]]:[[cx,H*.3],[cx,H*.7]]):[[cx,cy]];
     this.sources=[];
@@ -308,10 +347,10 @@ const Meio={
   stepM(s){
     const T={rest:60,mito:90,m1:100,h:30,m2:100};
     if(s.t<T[s.state]) return;
-    if(s.state==='rest'){s.state='mito'; s.ang+=2.39996; s.kh=s.h+rand(-4,4);}
-    else if(s.state==='mito'){s.state='m1'; s.kids=[0,1].map(()=>({h:s.kh+rand(-14,14)}));}
+    if(s.state==='rest'){s.state='mito'; s.ang+=2.39996; s.kh=s.h+rand(-4,4); s.gen=meiosis(DIPLOID);}
+    else if(s.state==='mito'){s.state='m1'; s.kids=[0,1].map(i=>({h:s.kh+rand(-14,14),g:s.gen.mi[i]}));}
     else if(s.state==='m1'){s.state='h';}
-    else if(s.state==='h'){s.state='m2'; s.kids=s.kids.flatMap(k=>[0,1].map(()=>({h:k.h+rand(-22,22),s:rand(60,74),l:rand(56,64)})));}
+    else if(s.state==='h'){s.state='m2'; s.kids=s.kids.flatMap((k,i)=>[0,1].map(j=>({h:k.h+rand(-22,22),s:rand(60,74),l:rand(56,64),g:s.gen.mii[i*2+j]})));}
     else if(s.state==='m2'){
       const ps=this.posM(s), D=ps.D;
       for(const p of ps.cells.slice(1)) this.release(p,D,1,0);
@@ -321,23 +360,23 @@ const Meio={
   },
   posM(s){
     const R=this.R, ax=Math.cos(s.ang), ay=Math.sin(s.ang), px=-ay, py=ax, P=Math.min(1,s.t/({rest:60,mito:90,m1:100,h:30,m2:100}[s.state]));
-    const stem={x:s.x,y:s.y,r:R*(1+.035*Math.sin(clock*.06)),h:s.h,s:58,l:56};
+    const stem={x:s.x,y:s.y,r:R*(1+.035*Math.sin(clock*.06)),h:s.h,s:58,l:56,g:DIPLOID};
     const out=[stem], bridges=[];
     let D={x:s.x,y:s.y};
     if(s.state==='mito'){
       const p=ease(P), d=p*R*2.1;
       D={x:s.x+ax*d,y:s.y+ay*d};
-      out.push({x:D.x,y:D.y,r:lerp(R*.55,R*.92,p),h:s.kh,s:58,l:57}); bridges.push([0,1]);
+      out.push({x:D.x,y:D.y,r:lerp(R*.55,R*.92,p),h:s.kh,s:58,l:57,g:P>.62?s.gen.rep:DIPLOID}); bridges.push([0,1]);
     } else if(s.state!=='rest'){
       const p1=s.state==='m1'?ease(P):1, p2=s.state==='m2'?ease(P):0;
       const dd=R*2.1+p1*R*.9+p2*R*.4; D={x:s.x+ax*dd,y:s.y+ay*dd};
-      const r1=lerp(R*.92,R*.68,p1), o1=p1*R*.95, r2=lerp(R*.68,R*.46,p2), o2=p2*R*.68;
+      const r1=lerp(R*.92,R*.68,p1), o1=p1*R*.95, r2=lerp(R*.68,R*.52,p2), o2=p2*R*.68;
       [-1,1].forEach((sg,i)=>{
         const cxx=D.x+px*o1*sg, cyy=D.y+py*o1*sg;
         if(s.state==='m2'){const base=out.length;
-          [-1,1].forEach((s2,j)=>{const k=s.kids[i*2+j]; out.push({x:cxx+ax*o2*s2,y:cyy+ay*o2*s2,r:r2,h:k.h,s:k.s,l:k.l});});
+          [-1,1].forEach((s2,j)=>{const k=s.kids[i*2+j]; out.push({x:cxx+ax*o2*s2,y:cyy+ay*o2*s2,r:r2,h:k.h,s:k.s,l:k.l,g:k.g});});
           bridges.push([base,base+1]);}
-        else {const k=s.kids[i]; out.push({x:cxx,y:cyy,r:r1,h:k.h,s:64,l:58});}
+        else {const k=s.kids[i]; out.push({x:cxx,y:cyy,r:r1,h:k.h,s:64,l:58,g:k.g});}
       });
       if(s.state!=='m2') bridges.push([1,2]);
     }
@@ -350,7 +389,7 @@ const Meio={
       if(!s.pool.length){s.state='done';return}
       const p=s.pool.splice(Math.floor(Math.random()*s.pool.length),1)[0];
       let a=Math.atan2(p.y-s.y,p.x-s.x); if(Math.hypot(p.x-s.x,p.y-s.y)<1) a=rand(0,6.28);
-      s.act={x0:p.x,y0:p.y,ang:a,h:p.h,b1:a+(Math.random()<.5?1:-1)*rand(1.2,1.9),b2:0};
+      s.act={x0:p.x,y0:p.y,ang:a,h:p.h,gen:meiosis(DIPLOID),b1:a+(Math.random()<.5?1:-1)*rand(1.2,1.9),b2:0};
       s.act.b2=s.act.b1+rand(2,2.6)*(Math.random()<.5?1:-1);
       s.state='grow';
     }
@@ -368,28 +407,29 @@ const Meio={
   },
   posF(s){
     const R=this.R, out=[], bridges=[];
-    for(const p of s.pool) out.push({x:p.x,y:p.y,r:s.pr*(1+.03*Math.sin(clock*.04+p.ph)),h:p.h,s:34,l:48});
+    for(const p of s.pool) out.push({x:p.x,y:p.y,r:s.pr*(1+.03*Math.sin(clock*.04+p.ph)),h:p.h,s:34,l:48,g:DIPLOID});
     const res={cells:out,bridges,egg:-1,polar:[]};
     const A=s.act; if(!A) return res;
     const P=Math.min(1,s.t/({grow:110,m1:100,h:30,m2:100}[s.state]||1));
     const g=s.state==='grow'?ease(P):1, ox=s.x+Math.cos(A.ang)*R*2.7, oy=s.y+Math.sin(A.ang)*R*2.7;
     const ex=lerp(A.x0,ox,g), ey=lerp(A.y0,oy,g);
     const eggR=s.state==='grow'?lerp(s.pr,R*1.15,g):s.state==='m1'?lerp(R*1.15,R*1.05,ease(P)):s.state==='m2'?lerp(R*1.05,R*.98,ease(P)):R*1.05;
-    const egg={x:ex,y:ey,r:eggR,h:A.h,s:lerp(34,66,g),l:lerp(48,60,g)};
+    const G=A.gen, egg={x:ex,y:ey,r:eggR,h:A.h,s:lerp(34,66,g),l:lerp(48,60,g),
+      g:s.state==='grow'?(P>.6?G.rep:DIPLOID):s.state==='m2'?G.mii[0]:G.mi[0]};
     res.egg=out.length; out.push(egg);
     if(s.state==='m1'||s.state==='h'||s.state==='m2'){
       const p1=s.state==='m1'?ease(P):1, pr1=lerp(R*.06,R*.3,p1), d1=lerp(egg.r*.7,egg.r+pr1*.9,p1);
       const bx=egg.x+Math.cos(A.b1)*d1, by=egg.y+Math.sin(A.b1)*d1;
       if(s.state==='m2'){
         const p2=ease(P), tx=-Math.sin(A.b1), ty=Math.cos(A.b1), o=p2*R*.24, r=lerp(R*.3,R*.21,p2);
-        res.polar.push(out.length); out.push({x:bx+tx*o,y:by+ty*o,r,h:A.h+10,s:50,l:62});
-        res.polar.push(out.length); out.push({x:bx-tx*o,y:by-ty*o,r,h:A.h+16,s:50,l:62});
+        res.polar.push(out.length); out.push({x:bx+tx*o,y:by+ty*o,r,h:A.h+10,s:50,l:62,g:G.mii[2]});
+        res.polar.push(out.length); out.push({x:bx-tx*o,y:by-ty*o,r,h:A.h+16,s:50,l:62,g:G.mii[3]});
         bridges.push([out.length-2,out.length-1]);
         const pr2=lerp(R*.06,R*.27,p2), d2=lerp(egg.r*.7,egg.r+pr2*.9,p2);
-        res.polar.push(out.length); out.push({x:egg.x+Math.cos(A.b2)*d2,y:egg.y+Math.sin(A.b2)*d2,r:pr2,h:A.h+12,s:50,l:62});
+        res.polar.push(out.length); out.push({x:egg.x+Math.cos(A.b2)*d2,y:egg.y+Math.sin(A.b2)*d2,r:pr2,h:A.h+12,s:50,l:62,g:G.mii[1]});
         bridges.push([res.egg,out.length-1]);
       } else {
-        res.polar.push(out.length); out.push({x:bx,y:by,r:pr1,h:A.h+10,s:50,l:62});
+        res.polar.push(out.length); out.push({x:bx,y:by,r:pr1,h:A.h+10,s:50,l:62,g:G.mi[1]});
         if(s.state==='m1') bridges.push([res.egg,out.length-1]);
       }
     }
@@ -397,7 +437,7 @@ const Meio={
   },
   release(p,from,mob,life){
     const a=Math.atan2(p.y-from.y,p.x-from.x);
-    this.gametes.push({x:p.x,y:p.y,r:p.r,h:p.h,s:p.s,l:p.l,vx:Math.cos(a)*.4*mob,vy:Math.sin(a)*.4*mob,
+    this.gametes.push({x:p.x,y:p.y,r:p.r,h:p.h,s:p.s,l:p.l,g:p.g,vx:Math.cos(a)*.4*mob,vy:Math.sin(a)*.4*mob,
       th:a,spin:rand(0,6),age:0,alpha:1,mob,life});
   },
   halo(x,y,r,h,a){
